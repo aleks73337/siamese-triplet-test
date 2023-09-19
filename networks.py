@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -9,17 +10,19 @@ class EmbeddingNet(nn.Module):
                                      nn.MaxPool2d(2, stride=2),
                                      nn.Conv2d(32, 64, 5), nn.PReLU(),
                                      nn.MaxPool2d(2, stride=2))
-
-        self.fc = nn.Sequential(nn.Linear(64 * 4 * 4, 256),
+        self.lstm = nn.LSTM(input_size=5, hidden_size=3, num_layers=1, batch_first=True)
+        self.fc = nn.Sequential(nn.Linear(300, 180),
                                 nn.PReLU(),
-                                nn.Linear(256, 256),
+                                nn.Linear(180, 60),
                                 nn.PReLU(),
-                                nn.Linear(256, 2)
+                                nn.Linear(60, 20),
+                                nn.PReLU(),
+                                nn.Linear(20, 2)
                                 )
 
     def forward(self, x):
-        output = self.convnet(x)
-        output = output.view(output.size()[0], -1)
+        # x, _ = self.lstm(x)
+        output = x.reshape(x.size()[0], -1)
         output = self.fc(output)
         return output
 

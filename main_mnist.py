@@ -17,6 +17,7 @@ from torchvision.datasets import MNIST
 
 from trainer import fit
 from datasets import SiameseMNIST, TripletMNIST, BalancedBatchSampler
+from datasets_custom import Patterns, SiamesePatterns, TripletPatterns
 from metrics import AccumulatedAccuracyMetric, AverageNonzeroTripletsMetric
 from networks import EmbeddingNet, ClassificationNet, SiameseNet, TripletNet
 from losses import ContrastiveLoss, TripletLoss, OnlineContrastiveLoss, OnlineTripletLoss
@@ -28,18 +29,20 @@ warnings.filterwarnings("ignore")
 cuda = torch.cuda.is_available()
 
 # load and Normalize dataset
-mean, std = 0.1307, 0.3081
-train_dataset = MNIST('data/MNIST', train=True, download=False,
-                      transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((mean,), (std,))]))
-test_dataset = MNIST('data/MNIST', train=False, download=False,
-                     transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((mean,), (std,))]))
+# mean, std = 0.1307, 0.3081
+# train_dataset = MNIST('data/MNIST', train=True, download=True,
+#                       transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((mean,), (std,))]))
+# test_dataset = MNIST('data/MNIST', train=False, download=True,
+#                      transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((mean,), (std,))]))
+train_dataset = Patterns(root="data", train=True, transform=None)
+test_dataset = Patterns(root="data", train=False, transform=None)
 # Print Data
 # print(train_dataset)
 # print(train_dataset[0][0].shape)
 
 # Common setup
-n_classes = 10
-mnist_classes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+n_classes = 4
+mnist_classes = ['0', '1', '2', '3']
 colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 
 def plot_embeddings(embeddings, targets, title=None, xlim=None, ylim=None):
@@ -74,7 +77,7 @@ def extract_embeddings(dataloader, model):
 # Set up data loaders
 title = '1. Baseline - classification with softmax'
 print(f'\n{title}:')
-batch_size = 256
+batch_size = 2
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
@@ -87,10 +90,11 @@ if cuda:
 loss_fn = torch.nn.NLLLoss()
 lr = 1e-2
 optimizer = optim.Adam(model.parameters(), lr=lr)
-scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+scheduler = lr_scheduler.StepLR(optimizer, 40, gamma=0.1, last_epoch=-1)
+n_epochs = 100
 log_interval = 50
 
+##
 fit(train_loader, test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval,
     metrics=[AccumulatedAccuracyMetric()])
 
@@ -98,6 +102,8 @@ train_embeddings_baseline, train_labels_baseline = extract_embeddings(train_load
 plot_embeddings(train_embeddings_baseline, train_labels_baseline, f'{title}, train_embeddings_baseline')
 val_embeddings_baseline, val_labels_baseline = extract_embeddings(test_loader, model)
 plot_embeddings(val_embeddings_baseline, val_labels_baseline, f'{title}, val_embeddings_baseline')
+##
+
 # While the embeddings look separable (which is what we trained them for),
 # they don't have good metric properties. They might not be the best choice as a descriptor for new classes.
 
@@ -108,33 +114,34 @@ plot_embeddings(val_embeddings_baseline, val_labels_baseline, f'{title}, val_emb
 # Set up data loaders
 title = '2. Siamese network'
 print(f'\n{title}:')
-siamese_train_dataset = SiameseMNIST(train_dataset) # Returns pairs of images and target same/different
-siamese_test_dataset = SiameseMNIST(test_dataset)
-batch_size = 128
+siamese_train_dataset = SiamesePatterns(train_dataset) # Returns pairs of images and target same/different
+siamese_test_dataset = SiamesePatterns(test_dataset)
+batch_size = 2
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
 siamese_train_loader = torch.utils.data.DataLoader(siamese_train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 siamese_test_loader = torch.utils.data.DataLoader(siamese_test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
 
 # Set up the network and training parameters
-margin = 1.
+margin = .15
 embedding_net = EmbeddingNet()
 model = SiameseNet(embedding_net)
 if cuda:
     model.cuda()
 loss_fn = ContrastiveLoss(margin)
-lr = 1e-3
+lr = 1e-2
 optimizer = optim.Adam(model.parameters(), lr=lr)
-scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+scheduler = lr_scheduler.StepLR(optimizer, 40, gamma=0.1, last_epoch=-1)
+n_epochs = 100
 log_interval = 100
 
+###
 fit(siamese_train_loader, siamese_test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval)
-
+#
 train_embeddings_cl, train_labels_cl = extract_embeddings(train_loader, model)
 plot_embeddings(train_embeddings_cl, train_labels_cl, f'{title}, train_embeddings_cl')
 val_embeddings_cl, val_labels_cl = extract_embeddings(test_loader, model)
 plot_embeddings(val_embeddings_cl, val_labels_cl, f'{title}, val_embeddings_cl')
-
+###
 
 # Triplet network
 # We'll train a triplet network, that takes an anchor, positive (same class as anchor)
@@ -144,32 +151,34 @@ plot_embeddings(val_embeddings_cl, val_labels_cl, f'{title}, val_embeddings_cl')
 title = '3. Triplet network'
 print(f'\n{title}:')
 # Set up data loaders
-triplet_train_dataset = TripletMNIST(train_dataset) # Returns triplets of images
-triplet_test_dataset = TripletMNIST(test_dataset)
-batch_size = 128
+triplet_train_dataset = TripletPatterns(train_dataset) # Returns triplets of images
+triplet_test_dataset = TripletPatterns(test_dataset)
+batch_size = 2
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
 triplet_train_loader = torch.utils.data.DataLoader(triplet_train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 triplet_test_loader = torch.utils.data.DataLoader(triplet_test_dataset, batch_size=batch_size, shuffle=False, **kwargs)
 
 # Set up the network and training parameters
-margin = 1.
+margin = .15
 embedding_net = EmbeddingNet()
 model = TripletNet(embedding_net)
 if cuda:
     model.cuda()
 loss_fn = TripletLoss(margin)
-lr = 1e-3
+lr = 1e-2
 optimizer = optim.Adam(model.parameters(), lr=lr)
-scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+scheduler = lr_scheduler.StepLR(optimizer, 40, gamma=0.1, last_epoch=-1)
+n_epochs = 100
 log_interval = 100
 
+###
 fit(triplet_train_loader, triplet_test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval)
-
+#
 train_embeddings_tl, train_labels_tl = extract_embeddings(train_loader, model)
 plot_embeddings(train_embeddings_tl, train_labels_tl, f'{title}, train_embeddings')
 val_embeddings_tl, val_labels_tl = extract_embeddings(test_loader, model)
 plot_embeddings(val_embeddings_tl, val_labels_tl, f'{title}, val_embeddings')
+###
 
 ## Online pair selection
 ## Steps
@@ -181,33 +190,34 @@ plot_embeddings(val_embeddings_tl, val_labels_tl, f'{title}, val_embeddings')
 title = '4. Online pair selection - negative mining'
 print(f'\n{title}:')
 # We'll create mini batches by sampling labels that will be present in the mini batch and number of examples from each class
-train_batch_sampler = BalancedBatchSampler(train_dataset.train_labels, n_classes=10, n_samples=25)
-test_batch_sampler = BalancedBatchSampler(test_dataset.test_labels, n_classes=10, n_samples=25)
+train_batch_sampler = BalancedBatchSampler(train_dataset.labels, n_classes=4, n_samples=4)
+test_batch_sampler = BalancedBatchSampler(test_dataset.labels, n_classes=4, n_samples=4)
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
 online_train_loader = torch.utils.data.DataLoader(train_dataset, batch_sampler=train_batch_sampler, **kwargs)
 online_test_loader = torch.utils.data.DataLoader(test_dataset, batch_sampler=test_batch_sampler, **kwargs)
 
 # Set up the network and training parameters
-margin = 1.
+margin = .15
 embedding_net = EmbeddingNet()
 model = embedding_net
 if cuda:
     model.cuda()
 loss_fn = OnlineContrastiveLoss(margin, HardNegativePairSelector())
-lr = 1e-3
+lr = 1e-2
 optimizer = optim.Adam(model.parameters(), lr=lr)
-scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+scheduler = lr_scheduler.StepLR(optimizer, 40, gamma=0.1, last_epoch=-1)
+n_epochs = 100
 log_interval = 50
 
+###
 fit(online_train_loader, online_test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval)
-
+#
 train_embeddings_ocl, train_labels_ocl = extract_embeddings(train_loader, model)
 plot_embeddings(train_embeddings_ocl, train_labels_ocl, f'{title}, train_embeddings')
 val_embeddings_ocl, val_labels_ocl = extract_embeddings(test_loader, model)
 plot_embeddings(val_embeddings_ocl, val_labels_ocl, f'{title}, val_embeddings')
-
+###
 
 ## Online triplet selection
 ## Steps
@@ -220,24 +230,24 @@ plot_embeddings(val_embeddings_ocl, val_labels_ocl, f'{title}, val_embeddings')
 title = '5. Online triplet selection - negative mining'
 print(f'\n{title}:')
 # We'll create mini batches by sampling labels that will be present in the mini batch and number of examples from each class
-train_batch_sampler = BalancedBatchSampler(train_dataset.train_labels, n_classes=10, n_samples=25)
-test_batch_sampler = BalancedBatchSampler(test_dataset.test_labels, n_classes=10, n_samples=25)
+train_batch_sampler = BalancedBatchSampler(train_dataset.labels, n_classes=4, n_samples=4)
+test_batch_sampler = BalancedBatchSampler(test_dataset.labels, n_classes=4, n_samples=4)
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if cuda else {}
 online_train_loader = torch.utils.data.DataLoader(train_dataset, batch_sampler=train_batch_sampler, **kwargs)
 online_test_loader = torch.utils.data.DataLoader(test_dataset, batch_sampler=test_batch_sampler, **kwargs)
 
 # Set up the network and training parameters
-margin = 1.
+margin = .3
 embedding_net = EmbeddingNet()
 model = embedding_net
 if cuda:
     model.cuda()
 loss_fn = OnlineTripletLoss(margin, RandomNegativeTripletSelector(margin))
-lr = 1e-3
+lr = 1e-2
 optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-scheduler = lr_scheduler.StepLR(optimizer, 8, gamma=0.1, last_epoch=-1)
-n_epochs = 20
+scheduler = lr_scheduler.StepLR(optimizer, 25, gamma=0.1, last_epoch=-1)
+n_epochs = 60
 log_interval = 50
 
 fit(online_train_loader, online_test_loader, model, loss_fn, optimizer, scheduler, n_epochs, cuda, log_interval,
@@ -253,12 +263,16 @@ plot_embeddings(val_embeddings_otl, val_labels_otl, f'{title}, val_embeddings_ot
 #     train_embeddings_otl, train_embeddings_tl, train_labels_otl, train_labels_tl
 display_emb_online, display_emb, display_label_online, display_label = \
     val_embeddings_otl, val_embeddings_tl, val_labels_otl, val_labels_tl
+x_lim = (np.min(display_emb[:,0]), np.max(display_emb[:,0]))
+y_lim = (np.min(display_emb[:,1]), np.max(display_emb[:,1]))
+plot_embeddings(display_emb, display_label, f'{title}, display_val_emb_otl', x_lim, y_lim)
 x_lim = (np.min(display_emb_online[:,0]), np.max(display_emb_online[:,0]))
 y_lim = (np.min(display_emb_online[:,1]), np.max(display_emb_online[:,1]))
-plot_embeddings(display_emb, display_label, f'{title}, display_val_emb_otl', x_lim, y_lim)
 plot_embeddings(display_emb_online, display_label_online, f'{title}, display_online_val_emb_otl', x_lim, y_lim)
 
+x_lim = (np.min(train_embeddings_cl[:,0]), np.max(train_embeddings_cl[:,0]))
+y_lim = (np.min(train_embeddings_cl[:,1]), np.max(train_embeddings_cl[:,1]))
+plot_embeddings(train_embeddings_cl, train_labels_cl, f'{title}, train_embeddings_cl', x_lim, y_lim)
 x_lim = (np.min(train_embeddings_ocl[:,0]), np.max(train_embeddings_ocl[:,0]))
 y_lim = (np.min(train_embeddings_ocl[:,1]), np.max(train_embeddings_ocl[:,1]))
-plot_embeddings(train_embeddings_cl, train_labels_cl, f'{title}, train_embeddings_cl', x_lim, y_lim)
 plot_embeddings(train_embeddings_ocl, train_labels_ocl, f'{title}, val_embeddings_cl', x_lim, y_lim)
