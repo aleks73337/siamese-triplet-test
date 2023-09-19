@@ -6,6 +6,7 @@
 import warnings
 
 import numpy as np
+import random, os
 
 import torch
 import torch.optim as optim
@@ -24,6 +25,18 @@ from losses import ContrastiveLoss, TripletLoss, OnlineContrastiveLoss, OnlineTr
 
 from utils import HardNegativePairSelector  # Strategies for selecting pairs within a minibatch
 from utils import RandomNegativeTripletSelector  # Strategies for selecting triplets within a minibatch
+
+
+def seed_everything(seed: int):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
+
+seed_everything(51)
 
 warnings.filterwarnings("ignore")
 cuda = torch.cuda.is_available()
